@@ -42,7 +42,7 @@ void scan(int n, int *odata, const int *idata) {
   cudaMalloc((void **)&dev_odata, N * sizeof(int));
   checkCUDAError("efficientScan cudaMalloc dev_odata failed!");
   cudaMemset(dev_odata, 0, N * sizeof(int));
-  checkCUDAError("efficientScan cudaMemset dev_idata failed!");
+  checkCUDAError("efficientScan cudaMemset dev_odata failed!");
   cudaMemcpy(dev_odata, idata, n * sizeof(int), cudaMemcpyHostToDevice);
   checkCUDAError("efficientScan cudaMemcpy to device failed!");
   cudaDeviceSynchronize();
@@ -56,8 +56,8 @@ void scan(int n, int *odata, const int *idata) {
     checkCUDAError("efficientScan kernUpSweep failed!");
     cudaDeviceSynchronize();
   }
-  cudaMemset(dev_odata + N - 1, 0, sizeof(int));
-  checkCUDAError("efficientScan cudaMemset dev_odata after UpSweep failed!");
+  cudaMemset(dev_odata + N - 1, 0, sizeof(int));  // set last element to 0
+  checkCUDAError("efficientScan cudaMemset after UpSweep failed!");
   cudaDeviceSynchronize();
   for (int d = ilog2ceil(n) - 1; d >= 0; d--) {
     int numNodes = N >> (d + 1);
@@ -75,6 +75,33 @@ void scan(int n, int *odata, const int *idata) {
 }
 
 /**
+ * Performs scan on device array dev_odata in place.
+ */
+void dev_scan(int n, int *dev_odata) {
+  int N = (1 << ilog2ceil(n));
+
+  for (int d = 0; d < ilog2ceil(n); d++) {
+    int numNodes = N >> (d + 1);
+    dim3 fullBlocksPerGrid((numNodes + blockSize - 1) / blockSize);
+    kernUpSweep<<<fullBlocksPerGrid, blockSize>>>(N, numNodes, 1 << (d + 1),
+                                                  dev_odata);
+    checkCUDAError("efficientScan kernUpSweep failed!");
+    cudaDeviceSynchronize();
+  }
+  cudaMemset(dev_odata + N - 1, 0, sizeof(int));  // set last element to 0
+  checkCUDAError("efficientScan cudaMemset after UpSweep failed!");
+  cudaDeviceSynchronize();
+  for (int d = ilog2ceil(n) - 1; d >= 0; d--) {
+    int numNodes = N >> (d + 1);
+    dim3 fullBlocksPerGrid((numNodes + blockSize - 1) / blockSize);
+    kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(N, numNodes, 1 << (d + 1),
+                                                    dev_odata);
+    checkCUDAError("efficientScan kernDownSweep failed!");
+    cudaDeviceSynchronize();
+  }
+}
+
+/**
  * Performs stream compaction on idata, storing the result into odata.
  * All zeroes are discarded.
  *
@@ -84,10 +111,66 @@ void scan(int n, int *odata, const int *idata) {
  * @returns      The number of elements remaining after compaction.
  */
 int compact(int n, int *odata, const int *idata) {
-  timer().startGpuTimer();
+  int *dev_idata;
+  int *dev_odata;
+  int *dev_bArr;
+  int *dev_scanResult;
+  int N = (1 << ilog2ceil(n));
+  cudaMalloc((void **)&dev_idata, N * sizeof(int));
+  checkCUDAError("efficientCompact cudaMalloc dev_idata failed!");
+  cudaMalloc((void **)&dev_odata, N * sizeof(int));
+  checkCUDAError("efficientCompact cudaMalloc dev_odata failed!");
+  cudaMalloc((void **)&dev_bArr, N * sizeof(int));
+  checkCUDAError("efficientCompact cudaMalloc dev_bArr failed!");
+  cudaMalloc((void **)&dev_scanResult, N * sizeof(int));
+  checkCUDAError("efficientCompact cudaMalloc dev_scanResult failed!");
+  cudaMemset(dev_idata, 0, N * sizeof(int));
+  checkCUDAError("efficientCompact cudaMemset dev_idata failed!");
+  cudaMemcpy(dev_idata, idata, n * sizeof(int), cudaMemcpyHostToDevice);
+  checkCUDAError("efficientCompact cudaMemcpy dev_idata failed!");
+  cudaMemcpy(dev_odata, idata, N * sizeof(int), cudaMemcpyHostToDevice);
+  checkCUDAError("efficientCompact cudaMemcpy dev_odata failed!");
+  cudaDeviceSynchronize();
+
+  dim3 fullBlocksPerGrid = (N + blockSize - 1) / blockSize;
+
+  timer().startGpuTimer();  // start timer
   // TODO
-  timer().endGpuTimer();
-  return -1;
+  StreamCompaction::Common::kernMapToBoolean<<<fullBlocksPerGrid, blockSize>>>(
+      N, dev_bArr, dev_idata);
+  cudaDeviceSynchronize();
+  checkCUDAError("efficientCompact kernMapToBoolean failed!");
+  cudaMemcpy(dev_scanResult, dev_bArr, N * sizeof(int),
+             cudaMemcpyDeviceToDevice);
+  checkCUDAError("efficientCompact cudaMemcpy dev_scanResult failed!");
+  cudaDeviceSynchronize();
+  dev_scan(N, dev_scanResult);
+  cudaDeviceSynchronize();
+  checkCUDAError("efficientCompact scan failed!");
+
+  StreamCompaction::Common::kernScatter<<<fullBlocksPerGrid, blockSize>>>(
+      N, dev_odata, dev_idata, dev_bArr, dev_scanResult);
+  cudaDeviceSynchronize();
+  checkCUDAError("efficientCompact kernScatter failed!");
+
+  timer().endGpuTimer();  // end timer
+
+  int lastElement, numElements;
+  cudaMemcpy(&lastElement, dev_idata + n - 1, sizeof(int),
+             cudaMemcpyDeviceToHost);
+  checkCUDAError("efficientCompact cudaMemcpy lastElement failed!");
+  cudaMemcpy(&numElements, dev_scanResult + n - 1, sizeof(int),
+             cudaMemcpyDeviceToHost);
+  checkCUDAError("efficientCompact cudaMemcpy numElements failed!");
+  numElements += (lastElement == 0) ? 0 : 1;
+  cudaMemcpy(odata, dev_odata, numElements * sizeof(int),
+             cudaMemcpyDeviceToHost);
+  checkCUDAError("efficientCompact cudaMemcpy to host failed!");
+  cudaFree(dev_idata);
+  cudaFree(dev_odata);
+  cudaFree(dev_bArr);
+  cudaFree(dev_scanResult);
+  return numElements;
 }
 }  // namespace Efficient
 }  // namespace StreamCompaction

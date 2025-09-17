@@ -12,6 +12,16 @@ PerformanceTimer &timer() {
 }
 
 /**
+ * CPU scan implementation without timer.
+ */
+void __scan(int n, int *odata, const int *idata) {
+  odata[0] = 0;
+  for (int i = 1; i < n; i++) {
+    odata[i] = odata[i - 1] + idata[i - 1];
+  }
+}
+
+/**
  * CPU scan (prefix sum).
  * For performance analysis, this is supposed to be a simple for loop.
  * (Optional) For better understanding before starting moving to GPU, you can
@@ -20,10 +30,7 @@ PerformanceTimer &timer() {
 void scan(int n, int *odata, const int *idata) {
   timer().startCpuTimer();
   // TODO
-  odata[0] = 0;
-  for (unsigned int i = 1; i < n; i++) {
-    odata[i] = odata[i - 1] + idata[i - 1];
-  }
+  __scan(n, odata, idata);
   timer().endCpuTimer();
 }
 
@@ -36,7 +43,7 @@ int compactWithoutScan(int n, int *odata, const int *idata) {
   timer().startCpuTimer();
   // TODO
   int count = 0;
-  for (unsigned int i = 0; i < n; i++) {
+  for (int i = 0; i < n; i++) {
     if (idata[i]) {
       odata[count] = idata[i];
       count++;
@@ -53,25 +60,25 @@ int compactWithoutScan(int n, int *odata, const int *idata) {
  */
 int compactWithScan(int n, int *odata, const int *idata) {
   // TODO
-  int *b_arr = new int[n];
-  int *scan_result = new int[n];
-  timer().startCpuTimer();
+  int *bArr = new int[n];
+  int *scanResult = new int[n];
   int count = 0;
-  for (unsigned int i = 0; i < n; i++) {
-    b_arr[i] = (idata[i] == 0) ? 0 : 1;
+  timer().startCpuTimer();
+  for (int i = 0; i < n; i++) {
+    bArr[i] = (idata[i] == 0) ? 0 : 1;
   }
-  scan(n, scan_result, b_arr);
-  for (unsigned int i = 0; i < n; i++) {
-    if (b_arr[i]) {
-      odata[scan_result[i]] = idata[i];
+  __scan(n, scanResult, bArr);
+  for (int i = 0; i < n; i++) {
+    if (bArr[i]) {
+      odata[scanResult[i]] = idata[i];
       count++;
     }
   }
   timer().endCpuTimer();
-  delete[] b_arr;
-  delete[] scan_result;
-  b_arr = nullptr;
-  scan_result = nullptr;
+  delete[] bArr;
+  delete[] scanResult;
+  bArr = nullptr;
+  scanResult = nullptr;
   return count;
 }
 }  // namespace CPU
