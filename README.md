@@ -151,7 +151,7 @@ NVIDIA's Thrust library provides highly optimized parallel primitives, including
 
 Performance was measured on Release builds for input arrays ranging from $2^{21}$ (~2 million) to $2^{27}$ (~134 million) elements. The following plots illustrate scalability and efficiency:
 
-<img src="./img/plot_scan.png" style="width:80%; height:auto;">
+<img src="./img/plot_scan.png" style="width:100%; height:auto;">
 
 **Scan Performance:**
 - At $2^{27}$ (134 million elements):
@@ -162,7 +162,7 @@ Performance was measured on Release builds for input arrays ranging from $2^{21}
 
 Thrust is the fastest, with work-efficient scan showing strong scalability. Naive scan is limited by memory and thread inefficiencies.
 
-<img src="./img/plot_compact.png" style="width:80%; height:auto;">
+<img src="./img/plot_compact.png" style="width:100%; height:auto;">
 
 **Compaction Performance:**
 - At $2^{27}$:
@@ -179,16 +179,19 @@ CPU and naive algorithms are unaffected by array size alignment. Work-efficient 
 Radix sort was implemented using work-efficient scan and compared to Thrust sort. Correctness was verified, but performance lags behind Thrust due to kernel launch overhead and array management.
 
 ```
+**********************
+** RADIX SORT TESTS **
+**********************
 ==== thrust sort, power-of-two ====
-   elapsed time: 74.97ms    (CUDA Measured)
+   elapsed time: 74.9665ms    (CUDA Measured)
 ==== thrust sort, non-power-of-two ====
-   elapsed time: 40.63ms    (CUDA Measured)
+   elapsed time: 40.6305ms    (CUDA Measured)
 ==== radix sort, power-of-two ====
-   elapsed time: 2170.37ms  (CUDA Measured)
-  passed
+   elapsed time: 2170.37ms    (CUDA Measured)
+    passed
 ==== radix sort, non-power-of-two ====
-   elapsed time: 2170.83ms  (CUDA Measured)
-  passed
+   elapsed time: 2170.83ms    (CUDA Measured)
+    passed
 ```
 
 Radix sort is correct but much slower than Thrust. My hypothesis is that my implementation involves repeated kernel launches and management of multiple temporary arrays, which can be inefficient. Future optimization is needed.
