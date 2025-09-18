@@ -12,11 +12,12 @@ PerformanceTimer &timer() {
   return timer;
 }
 // TODO: __global__
-__global__ void kernNaiveScan(int n, int d, int *odata, const int *idata) {
+__global__ void kernNaiveScan(int n, int offset, int *odata, const int *idata) {
   int index = blockDim.x * blockIdx.x + threadIdx.x;
   if (index < n) {
-    if (index >= (1 << (d - 1))) {
-      odata[index] = idata[index - (1 << (d - 1))] + idata[index];
+    odata[index] = idata[index];
+    if (index >= offset) {
+      odata[index] = idata[index - offset] + idata[index];
     }
   }
 }
@@ -43,9 +44,9 @@ void scan(int n, int *odata, const int *idata) {
   timer().startGpuTimer();
   // TODO
   for (int d = 1; d <= ilog2ceil(n); d++) {
-    cudaMemcpy(dev_odata, dev_idata, n * sizeof(int), cudaMemcpyDeviceToDevice);
-    kernNaiveScan<<<fullBlocksPerGrid, blockSize>>>(n, d, dev_odata, dev_idata);
-    cudaDeviceSynchronize();
+    kernNaiveScan<<<fullBlocksPerGrid, blockSize>>>(n, 1 << (d - 1), dev_odata,
+                                                    dev_idata);
+    // cudaDeviceSynchronize();
     std::swap(dev_odata, dev_idata);
   }
   cudaDeviceSynchronize();

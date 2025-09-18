@@ -18,14 +18,16 @@ namespace StreamCompaction {
 namespace Common {
 
 /**
- * Maps an array to an array of 0s and 1s for stream compaction. Elements
+ * Maps an array to two output arrays of 0s and 1s for stream compaction. Elements
  * which map to 0 will be removed, and elements which map to 1 will be kept.
  */
-__global__ void kernMapToBoolean(int n, int *bools, const int *idata) {
+__global__ void kernMapToBoolean(int n, int *bools1, int *bools2, const int *idata) {
   // TODO
   int index = blockDim.x * blockIdx.x + threadIdx.x;
   if (index < n) {
-    bools[index] = (idata[index] != 0) ? 1 : 0;
+    int val = (idata[index] != 0) ? 1 : 0;
+    bools1[index] = val;
+    bools2[index] = val;
   }
 }
 

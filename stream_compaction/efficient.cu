@@ -77,10 +77,8 @@ void scan(int n, int *odata, const int *idata) {
 /**
  * Performs scan on device array dev_odata in place.
  */
-void dev_scan(int n, int *dev_odata) {
-  int N = (1 << ilog2ceil(n));
-
-  for (int d = 0; d < ilog2ceil(n); d++) {
+void dev_scan(int N, int *dev_odata) {
+  for (int d = 0; d < ilog2ceil(N); d++) {
     int numNodes = N >> (d + 1);
     dim3 fullBlocksPerGrid((numNodes + blockSize - 1) / blockSize);
     kernUpSweep<<<fullBlocksPerGrid, blockSize>>>(N, numNodes, 1 << (d + 1),
@@ -91,7 +89,7 @@ void dev_scan(int n, int *dev_odata) {
   cudaMemset(dev_odata + N - 1, 0, sizeof(int));  // set last element to 0
   checkCUDAError("efficientScan cudaMemset after UpSweep failed!");
   cudaDeviceSynchronize();
-  for (int d = ilog2ceil(n) - 1; d >= 0; d--) {
+  for (int d = ilog2ceil(N) - 1; d >= 0; d--) {
     int numNodes = N >> (d + 1);
     dim3 fullBlocksPerGrid((numNodes + blockSize - 1) / blockSize);
     kernDownSweep<<<fullBlocksPerGrid, blockSize>>>(N, numNodes, 1 << (d + 1),
@@ -137,12 +135,8 @@ int compact(int n, int *odata, const int *idata) {
   timer().startGpuTimer();  // start timer
   // TODO
   StreamCompaction::Common::kernMapToBoolean<<<fullBlocksPerGrid, blockSize>>>(
-      N, dev_bArr, dev_idata);
-  cudaDeviceSynchronize();
+      N, dev_bArr, dev_scanResult, dev_idata);
   checkCUDAError("efficientCompact kernMapToBoolean failed!");
-  cudaMemcpy(dev_scanResult, dev_bArr, N * sizeof(int),
-             cudaMemcpyDeviceToDevice);
-  checkCUDAError("efficientCompact cudaMemcpy dev_scanResult failed!");
   cudaDeviceSynchronize();
   dev_scan(N, dev_scanResult);
   cudaDeviceSynchronize();
@@ -171,6 +165,120 @@ int compact(int n, int *odata, const int *idata) {
   cudaFree(dev_bArr);
   cudaFree(dev_scanResult);
   return numElements;
+}
+
+/**
+ * Compute the
+ * b array - bit value at bit position,
+ * e array - negation of b array,
+ * f array - index for false values,
+ * f array is now a copy of e array for subsequent in-place scan input.
+ */
+__global__ void kernComputeBEF(const int n, int *b, int *e, int *f,
+                               const int *idata, const int lsb) {
+  int index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (index < n) {
+    int bitmask = 1 << lsb;
+    int bVal = (idata[index] & bitmask) >> lsb;
+    int eVal = 1 - bVal;
+    b[index] = bVal;
+    e[index] = eVal;
+    f[index] = eVal;
+  }
+}
+
+/**
+ * Compute the t array - index for true values.
+ */
+__global__ void kernComputeT(const int n, int *t, const int *f,
+                             const int totalFalses) {
+  int index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (index < n) {
+    t[index] = index - f[index] + totalFalses;
+  }
+}
+
+/**
+ * Compute the d array - destination index.
+ */
+__global__ void kernComputeD(const int n, int *d, const int *b, const int *t,
+                             int *f) {
+  int index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (index < n) {
+    d[index] = b[index] ? t[index] : f[index];
+  }
+}
+
+__global__ void kernRadixScatter(const int n, int *odata, const int *idata,
+                                 const int *d) {
+  int index = blockDim.x * blockIdx.x + threadIdx.x;
+  if (index < n) {
+    odata[d[index]] = idata[index];
+  }
+}
+
+/**
+ * Performs radix sort on idata, storing the result into odata.
+ */
+void sort(int n, int *odata, const int *idata) {
+  int *dev_idata, *dev_odata, *dev_b, *dev_e, *dev_f, *dev_t, *dev_d;
+  int N = (1 << ilog2ceil(n));
+  cudaMalloc((void **)&dev_idata, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_idata failed!");
+  cudaMalloc((void **)&dev_odata, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_odata failed!");
+  cudaMalloc((void **)&dev_b, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_b failed!");
+  cudaMalloc((void **)&dev_e, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_e failed!");
+  cudaMalloc((void **)&dev_f, N * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_f failed!");
+  cudaMalloc((void **)&dev_t, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_t failed!");
+  cudaMalloc((void **)&dev_d, n * sizeof(int));
+  checkCUDAError("efficientSort cudaMalloc dev_d failed!");
+  cudaMemset(dev_f, 0, N * sizeof(int));
+  checkCUDAError("efficientSort cudaMemset dev_f failed!");
+  cudaMemcpy(dev_idata, idata, n * sizeof(int), cudaMemcpyHostToDevice);
+  checkCUDAError("efficientSort cudaMemcpy dev_idata failed!");
+  cudaDeviceSynchronize();
+  dim3 fullBlocksPerGrid((n + blockSize - 1) / blockSize);
+  timer().startGpuTimer();  // start timer
+  for (int lsb = 0; lsb < 8 * sizeof(int); lsb++) {
+    kernComputeBEF<<<fullBlocksPerGrid, blockSize>>>(n, dev_b, dev_e, dev_f,
+                                                     dev_idata, lsb);
+    checkCUDAError("efficientSort kernMapToBit failed!");
+    cudaDeviceSynchronize();
+    dev_scan(N, dev_f);
+    cudaDeviceSynchronize();
+    int totalFalses, lastFalse;
+    cudaMemcpy(&totalFalses, dev_f + n - 1, sizeof(int),
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(&lastFalse, dev_e + n - 1, sizeof(int), cudaMemcpyDeviceToHost);
+    totalFalses += lastFalse;
+    kernComputeT<<<fullBlocksPerGrid, blockSize>>>(n, dev_t, dev_f,
+                                                   totalFalses);
+    checkCUDAError("efficientSort kernComputeT failed!");
+    cudaDeviceSynchronize();
+    kernComputeD<<<fullBlocksPerGrid, blockSize>>>(n, dev_d, dev_b, dev_t,
+                                                   dev_f);
+    checkCUDAError("efficientSort kernComputeD failed!");
+    cudaDeviceSynchronize();
+    kernRadixScatter<<<fullBlocksPerGrid, blockSize>>>(n, dev_odata, dev_idata,
+                                                       dev_d);
+    std::swap(dev_idata, dev_odata);
+  }
+  cudaDeviceSynchronize();
+  timer().endGpuTimer();  // end timer
+  cudaMemcpy(odata, dev_idata, n * sizeof(int), cudaMemcpyDeviceToHost);
+  checkCUDAError("efficientSort cudaMemcpy to host failed!");
+  cudaFree(dev_idata);
+  cudaFree(dev_odata);
+  cudaFree(dev_b);
+  cudaFree(dev_e);
+  cudaFree(dev_f);
+  cudaFree(dev_t);
+  cudaFree(dev_d);
 }
 }  // namespace Efficient
 }  // namespace StreamCompaction

@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/scan.h>
+#include <thrust/sort.h>
 
 #include "common.h"
 #include "thrust.h"
@@ -27,6 +28,14 @@ void scan(int n, int *odata, const int *idata) {
   thrust::exclusive_scan(dev_idata.begin(), dev_idata.end(), dev_odata.begin());
   timer().endGpuTimer();
   thrust::copy(dev_odata.begin(), dev_odata.end(), odata);
+}
+
+void thrustSort(int n, int *odata, const int *idata) {
+  thrust::device_vector<int> dev_idata(idata, idata + n);
+  timer().startGpuTimer();
+  thrust::sort(thrust::device, dev_idata.begin(), dev_idata.end());
+  timer().endGpuTimer();
+  thrust::copy(dev_idata.begin(), dev_idata.end(), odata);
 }
 }  // namespace Thrust
 }  // namespace StreamCompaction
