@@ -1,8 +1,9 @@
 # CUDA Stream Compaction
+Work-efficient scan, stream compaction, and radix sort in CUDA.
 
-**University of Pennsylvania, CIS 5650: GPU Programming and Architecture, Project 2**
-
-**Author:** Lu Men ([LinkedIn](https://www.linkedin.com/in/lu-m-673425323/))
+**Author:** Lu M.
+- [LinkedIn](https://www.linkedin.com/in/lu-m-673425323/)
+- [Personal Site](https://lu-m-dev.github.io)
 
 **Tested System:**
  - Windows 11 Home
@@ -27,11 +28,11 @@ Performance is measured for scan and stream compaction operations over large arr
 
 1. Clone the repository:
    ```sh
-   git clone https://github.com/M320322/Project2-Stream-Compaction.git
+   git clone https://github.com/lu-m-dev/CUDA-stream-compaction.git
    ```
 2. Navigate to the project directory:
    ```sh
-   cd Project2-Stream-Compaction
+   cd CUDA-stream-compaction
    ```
 3. Build with CMake:
    ```sh
@@ -216,4 +217,4 @@ Accurate timing is essential for fair benchmarking. Timers (`std::chrono` for CP
 
 ## References
 
-Figures and pseudocode adapted from [CIS5650-Fall-2025](https://github.com/CIS5650-Fall-2025) course materials.
+Figures and pseudocode adapted from [University of Pennsylvania CIS 5650](https://github.com/CIS5650-Fall-2025) course materials.
